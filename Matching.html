@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocabulary Matching Game - Multi-Round</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .card {
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover:not(.matched) {
+            transform: scale(1.05);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .selected {
+            outline: 6px solid #3b82f6;
+            outline-offset: -6px;
+            z-index: 10;
+        }
+        .matched {
+            opacity: 0.3;
+            cursor: default;
+            pointer-events: none;
+            filter: grayscale(100%);
+        }
+        .shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #6366f1;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        .timer-low {
+            color: #ef4444;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen flex flex-col items-center py-8 px-4 font-sans text-slate-900">
+
+    <div class="max-w-4xl w-full text-center mb-6">
+        <h1 class="text-4xl font-black text-indigo-900 mb-2">Vocabulary Explorer</h1>
+        
+        <!-- Stats Bar -->
+        <div class="flex flex-wrap items-center justify-center gap-6 text-indigo-600 font-bold mb-4">
+            <div class="flex items-center gap-2">
+                <span>Round <span id="current-round-display">1</span> of <span id="total-rounds-display">3</span></span>
+                <div class="w-32 h-3 bg-indigo-100 rounded-full overflow-hidden">
+                    <div id="progress-fill" class="progress-bar h-full bg-indigo-500" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div class="bg-white px-4 py-1 rounded-full shadow-sm border border-indigo-100 flex items-center gap-2">
+                <span class="text-slate-400 text-sm">Timer:</span>
+                <span id="timer-display" class="text-xl tabular-nums">Waiting...</span>
+            </div>
+        </div>
+
+        <p id="round-instruction" class="text-lg text-slate-600">Images are loading. Prepare to match!</p>
+    </div>
+
+    <div id="game-container" class="max-w-6xl w-full grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Image Column -->
+        <div class="space-y-4">
+            <h2 class="text-xl font-bold text-slate-700 flex items-center gap-2">
+                <span class="bg-indigo-600 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md">1</span>
+                The Visual
+            </h2>
+            <div id="image-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-4">
+                <!-- Image cards will be injected here -->
+            </div>
+        </div>
+
+        <!-- Word Column -->
+        <div class="space-y-4">
+            <h2 class="text-xl font-bold text-slate-700 flex items-center gap-2">
+                <span class="bg-indigo-600 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md">2</span>
+                The Word
+            </h2>
+            <div id="word-list" class="grid grid-cols-1 gap-3">
+                <!-- Word buttons will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Success/Failure Modal -->
+    <div id="success-modal" class="fixed inset-0 bg-slate-900/90 hidden flex items-center justify-center z-50 p-6">
+        <div class="bg-white p-10 rounded-[2.5rem] shadow-2xl text-center max-w-sm w-full border-b-8 border-indigo-200">
+            <div id="modal-emoji" class="text-7xl mb-4">🌟</div>
+            <h2 id="modal-title" class="text-3xl font-black text-slate-800 mb-2">Round Complete!</h2>
+            <p id="modal-text" class="text-slate-600 mb-8 text-lg leading-tight">Ready for the next set of words?</p>
+            <div id="modal-score" class="mb-6 py-2 px-4 bg-indigo-50 rounded-xl font-bold text-indigo-700 hidden">
+                Matches: <span id="final-matches">0</span> / 6
+            </div>
+            <button id="next-round-btn" onclick="handleNextRound()" class="w-full bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold text-xl hover:bg-indigo-700 transition-all shadow-[0_6px_0_rgb(49,46,129)] active:shadow-none active:translate-y-1">
+                Next Round
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const apiKey = "";
+        const ROUND_TIME_LIMIT = 18;
+        
+        const gameRounds = [
+            {
+                round: 1,
+                vocabulary: [
+                    { id: 1, word: 'Envy', prompt: 'Cartoon monster looking longingly at others with a trophy, comic style' },
+                    { id: 2, word: 'Eager', prompt: 'Cheerful child leaning against a window with high anticipation, bright cartoon' },
+                    { id: 3, word: 'Desperate', prompt: 'Traveler in a dry desert reaching for a mirage, dramatic illustration' },
+                    { id: 4, word: 'Embarrassed', prompt: 'Blushing person on stage in pajamas, spotlight, cartoon style' },
+                    { id: 5, word: 'Confused', prompt: 'Student scratching head at chalkboard full of complex symbols, hand-drawn' },
+                    { id: 6, word: 'Delighted', prompt: 'Happy girl spinning in a sunflower field with a puppy, vibrant colors' }
+                ]
+            },
+            {
+                round: 2,
+                vocabulary: [
+                    { id: 7, word: 'Disaster', prompt: 'A cartoon scene of a messy room after a giant storm passed through, broken toys and tilted furniture' },
+                    { id: 8, word: 'Prevent', prompt: 'A sturdy metal cabinet with a large heavy lock on the outside. Inside, visible through glass, are various colorful glass laboratory chemical bottles labeled with hazard symbols, cartoon style' },
+                    { id: 9, word: 'Grateful', prompt: 'A person bowing with hands together in a thank you gesture, heart symbols floating nearby, warm illustration' },
+                    { id: 10, word: 'Director', prompt: 'A movie director sitting in a chair with a megaphone, wearing a beret on a film set, cartoon style' },
+                    { id: 11, word: 'Conservation', prompt: 'Hands holding a small green sprout and a globe, protecting nature, eco-friendly illustration' },
+                    { id: 12, word: 'Shed', prompt: 'A close-up illustration of a young boy with a sad expression, a single sparkling tear shedding from his eye and rolling down his cheek, expressive cartoon style' }
+                ]
+            },
+            {
+                round: 3,
+                vocabulary: [
+                    { id: 13, word: 'Astonish', prompt: 'A person with wide eyes and open mouth looking at a magic trick with a rabbit appearing from a hat, cartoon surprise' },
+                    { id: 14, word: 'Greeting', prompt: 'Two friendly characters waving and shaking hands with big smiles, "Hello" speech bubble, vibrant cartoon' },
+                    { id: 15, word: 'Sacred', prompt: 'A glowing ancient temple on a mountain top with golden light and white doves, mystical illustration' },
+                    { id: 16, word: 'Disappear', prompt: 'A magician making a cloth vanish into thin air with stars and sparkles, cartoon style' },
+                    { id: 17, word: 'Embrace', prompt: 'Two best friends giving a warm hug, heart shapes in the background, flat design illustration' },
+                    { id: 18, word: 'Grab', prompt: 'A hand reaching out quickly to catch a falling golden coin, action lines, comic book style' }
+                ]
+            }
+        ];
+
+        let currentRoundIndex = 0;
+        let selectedImageId = null;
+        let selectedWordId = null;
+        let matchedCount = 0;
+        let timeLeft = ROUND_TIME_LIMIT;
+        let timerInterval = null;
+        let isGameOver = true; 
+        let imagesLoadedCount = 0;
+
+        async function fetchImageWithRetry(item, retries = 5) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            instances: [{ prompt: item.prompt }],
+                            parameters: { sampleCount: 1 }
+                        })
+                    });
+                    if (!response.ok) throw new Error('API Error');
+                    const result = await response.json();
+                    return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+                } catch (error) {
+                    if (i === retries - 1) return null;
+                    await new Promise(res => setTimeout(res, Math.pow(2, i) * 1000));
+                }
+            }
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timeLeft = ROUND_TIME_LIMIT;
+            isGameOver = false;
+            document.getElementById('round-instruction').textContent = "Quick! Match all words before the timer hits zero!";
+            updateTimerDisplay();
+            
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateTimerDisplay();
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    endRound(false);
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const display = document.getElementById('timer-display');
+            display.textContent = `${timeLeft}s`;
+            
+            if (timeLeft <= 5) {
+                display.classList.add('timer-low');
+            } else {
+                display.classList.remove('timer-low');
+            }
+        }
+
+        function initRound() {
+            const currentRound = gameRounds[currentRoundIndex];
+            const imageGrid = document.getElementById('image-grid');
+            const wordList = document.getElementById('word-list');
+            
+            document.getElementById('current-round-display').textContent = currentRoundIndex + 1;
+            document.getElementById('total-rounds-display').textContent = gameRounds.length;
+            document.getElementById('progress-fill').style.width = `${((currentRoundIndex) / gameRounds.length) * 100}%`;
+            document.getElementById('timer-display').textContent = "Waiting...";
+            document.getElementById('round-instruction').textContent = `Round ${currentRoundIndex + 1}: Loading images...`;
+            
+            imageGrid.innerHTML = '';
+            wordList.innerHTML = '';
+            matchedCount = 0;
+            imagesLoadedCount = 0;
+            selectedImageId = null;
+            selectedWordId = null;
+            isGameOver = true;
+
+            const shuffledImages = [...currentRound.vocabulary].sort(() => Math.random() - 0.5);
+            const shuffledWords = [...currentRound.vocabulary].sort(() => Math.random() - 0.5);
+
+            shuffledImages.forEach(item => {
+                const container = document.createElement('div');
+                container.className = 'card aspect-square bg-white rounded-3xl shadow-sm border-4 border-white overflow-hidden flex items-center justify-center relative bg-indigo-50';
+                container.id = `img-card-${item.id}`;
+                container.innerHTML = '<div class="loading-spinner"></div>';
+                container.onclick = () => selectItem('image', item.id);
+                imageGrid.appendChild(container);
+
+                fetchImageWithRetry(item).then(url => {
+                    if (url) {
+                        container.innerHTML = `<img src="${url}" class="w-full h-full object-cover" alt="visual">`;
+                    } else {
+                        container.innerHTML = `<div class="p-4 text-center font-bold text-indigo-300 text-xs">${item.word}</div>`;
+                    }
+                    
+                    imagesLoadedCount++;
+                    if (imagesLoadedCount === currentRound.vocabulary.length) {
+                        startTimer();
+                    }
+                });
+            });
+
+            shuffledWords.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'bg-white py-5 px-6 rounded-2xl shadow-sm border-4 border-transparent text-xl font-bold text-slate-700 transition-all hover:bg-indigo-50 hover:border-indigo-100 text-center active:scale-95';
+                btn.id = `word-btn-${item.id}`;
+                btn.textContent = item.word;
+                btn.onclick = () => selectItem('word', item.id);
+                wordList.appendChild(btn);
+            });
+        }
+
+        function selectItem(type, id) {
+            if (isGameOver) return;
+            
+            if (type === 'image') {
+                const el = document.getElementById(`img-card-${id}`);
+                if (selectedImageId === id) {
+                    el.classList.remove('selected');
+                    selectedImageId = null;
+                } else {
+                    if (selectedImageId) document.getElementById(`img-card-${selectedImageId}`).classList.remove('selected');
+                    selectedImageId = id;
+                    el.classList.add('selected');
+                }
+            } else {
+                const el = document.getElementById(`word-btn-${id}`);
+                if (selectedWordId === id) {
+                    el.classList.remove('selected', 'bg-indigo-50', 'border-indigo-400');
+                    selectedWordId = null;
+                } else {
+                    if (selectedWordId) document.getElementById(`word-btn-${selectedWordId}`).classList.remove('selected', 'bg-indigo-50', 'border-indigo-400');
+                    selectedWordId = id;
+                    el.classList.add('selected', 'bg-indigo-50', 'border-indigo-400');
+                }
+            }
+            checkMatch();
+        }
+
+        function checkMatch() {
+            if (selectedImageId !== null && selectedWordId !== null) {
+                const imgEl = document.getElementById(`img-card-${selectedImageId}`);
+                const wordEl = document.getElementById(`word-btn-${selectedWordId}`);
+
+                if (selectedImageId === selectedWordId) {
+                    imgEl.classList.add('matched');
+                    imgEl.classList.remove('selected');
+                    wordEl.classList.add('matched', 'bg-green-100', 'text-green-800', 'border-green-200');
+                    wordEl.classList.remove('selected', 'bg-indigo-50', 'border-indigo-400');
+                    
+                    matchedCount++;
+                    selectedImageId = null;
+                    selectedWordId = null;
+
+                    if (matchedCount === gameRounds[currentRoundIndex].vocabulary.length) {
+                        clearInterval(timerInterval);
+                        endRound(true);
+                    }
+                } else {
+                    imgEl.classList.add('shake', 'border-red-400');
+                    wordEl.classList.add('shake', 'border-red-400', 'text-red-500');
+                    setTimeout(() => {
+                        imgEl.classList.remove('shake', 'border-red-400', 'selected');
+                        wordEl.classList.remove('shake', 'border-red-400', 'selected', 'bg-indigo-50', 'border-indigo-400', 'text-red-500');
+                        selectedImageId = null;
+                        selectedWordId = null;
+                    }, 600);
+                }
+            }
+        }
+
+        function endRound(success) {
+            isGameOver = true;
+            const isLastRound = currentRoundIndex === gameRounds.length - 1;
+            
+            const modalEmoji = document.getElementById('modal-emoji');
+            const modalTitle = document.getElementById('modal-title');
+            const modalText = document.getElementById('modal-text');
+            const modalScore = document.getElementById('modal-score');
+            const nextBtn = document.getElementById('next-round-btn');
+
+            modalScore.classList.remove('hidden');
+            document.getElementById('final-matches').textContent = matchedCount;
+
+            if (success) {
+                modalEmoji.textContent = isLastRound ? '🏆' : '🌟';
+                modalTitle.textContent = isLastRound ? 'Game Master!' : 'Round Complete!';
+                modalText.textContent = isLastRound ? 'Fantastic! You beat the clock!' : 'Great speed! Ready for more?';
+            } else {
+                modalEmoji.textContent = '⏰';
+                modalTitle.textContent = "Time's Up!";
+                modalText.textContent = "You ran out of time! Don't give up.";
+            }
+
+            nextBtn.textContent = isLastRound ? 'Restart Game' : 'Next Round';
+            
+            setTimeout(() => {
+                document.getElementById('success-modal').classList.remove('hidden');
+            }, 600);
+        }
+
+        function handleNextRound() {
+            document.getElementById('success-modal').classList.add('hidden');
+            document.getElementById('modal-score').classList.add('hidden');
+            if (currentRoundIndex < gameRounds.length - 1) {
+                currentRoundIndex++;
+            } else {
+                currentRoundIndex = 0;
+            }
+            initRound();
+        }
+
+        window.onload = initRound;
+    </script>
+</body>
+</html>
